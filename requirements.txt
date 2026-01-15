@@ -1,0 +1,15 @@
+fastapi
+uvicorn[standard]
+requests
+redis
+rq
+motor
+pymongo
+Authlib
+python-multipart
+google-generativeai
+ffmpeg-python
+pydantic
+python-dotenv
+httpx
+itsdangerous
