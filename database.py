@@ -1,20 +1,26 @@
-import redis
-from rq import Queue
+import os
 from motor.motor_asyncio import AsyncIOMotorClient
 
-# MongoDB Setup
-MONGO_DETAILS = "mongodb://localhost:27017"
-client_db = AsyncIOMotorClient(MONGO_DETAILS)
-database = client_db.video_ai_db
+# 1. Get Variable
+MONGO_DETAILS = os.getenv("MONGO_DETAILS")
 
-# Collections
-video_jobs_collection = database.get_collection("video_jobs")
-social_collection = database.get_collection("social_accounts")
-shop_collection = database.get_collection("shopify_stores")
-brand_collection = database.get_collection("brand_settings")
-publish_collection = database.get_collection("publish_jobs")
-review_collection = database.get_collection("user_reviews")
+# 2. Debugging: Print what we found (Masked for security)
+if MONGO_DETAILS:
+    print(f"✅ LOADING DATABASE at: {MONGO_DETAILS[:20]}...")
+else:
+    print("🚨 CRITICAL ERROR: MONGO_DETAILS Variable is Missing!")
 
-# Redis Queue Setup
-redis_conn = redis.Redis()
-q = Queue(connection=redis_conn)
+# 3. Fail-Safe: Do NOT use localhost. 
+# If variable is missing, this will crash (which is better than silently failing on localhost)
+if not MONGO_DETAILS:
+    raise ValueError("MONGO_DETAILS environment variable is not set on Railway!")
+
+# 4. Connect
+client = AsyncIOMotorClient(MONGO_DETAILS)
+db = client["shopify_video_db"]
+
+# 5. Define Collections
+shop_collection = db["shops"]
+review_collection = db["reviews"]
+social_collection = db["social_accounts"]
+brand_collection = db["brand_settings"]
