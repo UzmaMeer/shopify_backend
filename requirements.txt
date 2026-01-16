@@ -13,3 +13,6 @@ pyttsx3
 redis
 rq
 itsdangerous
+authlib
+httpx
+starlette
