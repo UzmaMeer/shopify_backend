@@ -1,26 +1,26 @@
 import os
 import redis
-from rq import Worker, Queue, Connection
+from rq import Worker, Queue
+# ❌ Removed 'Connection' from imports to fix the crash
 
 listen = ['default']
 
 # 1. Get Redis URL from Environment
 redis_url = os.getenv("REDIS_URL")
 
-# 2. Safety Check (Print to Logs)
 if not redis_url:
-    print("🚨 CRITICAL ERROR: REDIS_URL environment variable is missing in Worker!")
-    print("Worker is defaulting to localhost... THIS WILL FAIL on Railway.")
-    # Attempting to use localhost anyway (which causes the crash you see)
+    print("🚨 REDIS_URL not found! Defaulting to localhost (This will fail on Railway)")
     redis_url = "redis://localhost:6379"
-else:
-    print(f"✅ Worker connecting to Redis at: {redis_url[:20]}...")
 
-# 3. Connect
+# 2. Connect to Redis
 conn = redis.from_url(redis_url)
 
 if __name__ == '__main__':
-    with Connection(conn):
-        print("🚀 Worker Started... Listening for jobs.")
-        worker = Worker(list(map(Queue, listen)))
-        worker.work()
+    print(f"🚀 Worker starting... Connecting to Redis at {redis_url[:20]}...")
+    
+    # 3. Create Queue with explicit connection
+    q = Queue('default', connection=conn)
+    
+    # 4. Start Worker with explicit connection (No 'with Connection' block needed)
+    worker = Worker([q], connection=conn)
+    worker.work()
