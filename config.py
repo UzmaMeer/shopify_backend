@@ -9,7 +9,6 @@ if not os.path.exists(VIDEO_DIR):
     os.makedirs(VIDEO_DIR, exist_ok=True)
 
 # --- PUBLIC URL ---
-# Note: Isay ensure karein ke yeh aapka latest domain hai
 BASE_PUBLIC_URL = "https://snakiest-edward-autochthonously.ngrok-free.dev"
 
 # --- API KEYS ---
