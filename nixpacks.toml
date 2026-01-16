@@ -1,0 +1,6 @@
+[phases.setup]
+nixPkgs = ["python310", "ffmpeg", "espeak"]
+
+[start]
+# 👇 CHANGED: Removed "Backend/" because the file is already inside the folder
+cmd = "python main.py"
