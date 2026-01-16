@@ -1,19 +1,26 @@
 import os
 import redis
-from rq import SimpleWorker, Queue
+from rq import Worker, Queue, Connection
 
-# 1. Listen to the 'default' queue
 listen = ['default']
 
-# 2. Setup Redis Connection
-redis_url = 'redis://localhost:6379'
+# 1. Get Redis URL from Environment
+redis_url = os.getenv("REDIS_URL")
+
+# 2. Safety Check (Print to Logs)
+if not redis_url:
+    print("🚨 CRITICAL ERROR: REDIS_URL environment variable is missing in Worker!")
+    print("Worker is defaulting to localhost... THIS WILL FAIL on Railway.")
+    # Attempting to use localhost anyway (which causes the crash you see)
+    redis_url = "redis://localhost:6379"
+else:
+    print(f"✅ Worker connecting to Redis at: {redis_url[:20]}...")
+
+# 3. Connect
 conn = redis.from_url(redis_url)
 
 if __name__ == '__main__':
-    print("👷 Windows Worker Started... Waiting for Video Jobs...")
-    
-    # 3. Create Worker manually
-    queues = [Queue(name, connection=conn) for name in listen]
-    worker = SimpleWorker(queues, connection=conn)
-    
-    worker.work()
+    with Connection(conn):
+        print("🚀 Worker Started... Listening for jobs.")
+        worker = Worker(list(map(Queue, listen)))
+        worker.work()
