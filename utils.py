@@ -15,28 +15,31 @@ import re
 import textwrap 
 from motor.motor_asyncio import AsyncIOMotorClient
 
-# 👇 Disable SSL Warnings
+# 1. Import Shared Path from config to ensure volume (/app/video) is used
+#
+from config import VIDEO_DIR
+
+# Disable SSL Warnings for external requests
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # --- CONFIGURATION ---
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-VIDEO_DIR = os.path.join(BASE_DIR, "video")
-
-# ⚡ RESOLUTION: 480p (Mobile Vertical)
 WIDTH, HEIGHT = 480, 854 
 BGM_URL = "https://www.bensound.com/bensound-music/bensound-elevate.mp3" 
 
-# Gemini Setup
-genai.configure(api_key="AIzaSyDlFXPnGyBv8Rq4jZZP_aMQNM16UaQa5Dc")
+# 2. Gemini Setup using Environment Variable for security
+#
+GEMINI_KEY = os.getenv("GEMINI_API_KEY")
+genai.configure(api_key=GEMINI_KEY)
 
-# Database Connection
-MONGO_DETAILS = "mongodb://localhost:27017"
+# 3. Database Connection using Railway environment variables
+#
+MONGO_DETAILS = os.getenv("MONGO_DETAILS", "mongodb://localhost:27017")
 client_db = AsyncIOMotorClient(MONGO_DETAILS)
 db = client_db.video_ai_db
 brand_collection = db.get_collection("brand_settings")
 
-# 👇 GPU ACCELERATION CHECK
 def get_ffmpeg_codec():
+    """Detects available FFmpeg codecs based on the operating system."""
     system = platform.system()
     try:
         subprocess.run(['ffmpeg', '-hide_banner', '-encoders'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -48,6 +51,7 @@ def get_ffmpeg_codec():
 VIDEO_CODEC = get_ffmpeg_codec()
 
 def get_audio_duration(file_path):
+    """Retrieves the duration of an audio file using ffprobe."""
     if not file_path or not os.path.exists(file_path): return 15.0
     try:
         cmd = ['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', file_path]
@@ -57,8 +61,9 @@ def get_audio_duration(file_path):
 
 # ⚡ TASK A: AUDIO CHAIN
 def process_audio_chain(title, desc, gender, script_tone, duration):
+    """Generates a script via AI and converts it to speech using pyttsx3."""
     try:
-        model = genai.GenerativeModel('gemini-2.5-flash')
+        model = genai.GenerativeModel('gemini-1.5-flash')
         clean_desc = desc.replace('<p>', '').replace('</p>', '').replace('<br>', ' ')
         target_word_count = int(float(duration) * 2.2) 
         
@@ -101,6 +106,7 @@ def process_audio_chain(title, desc, gender, script_tone, duration):
 
 # ⚡ TASK B: IMAGE PROCESSING
 def create_robust_session():
+    """Creates a requests session with retry logic for stable image downloads."""
     session = requests.Session()
     retry = Retry(total=3, backoff_factor=0.5, status_forcelist=[500, 502, 503, 504])
     adapter = HTTPAdapter(max_retries=retry)
@@ -108,36 +114,32 @@ def create_robust_session():
     return session
 
 def download_and_process_image(args):
+    """Downloads an image, validates it, and resizes it for the video resolution."""
     i, url, is_audio, is_logo, session = args 
     try:
         res = session.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=20, verify=False)
         if res.status_code == 200:
-            # 🟢 CHECK CONTENT TYPE to avoid saving HTML as PNG
             content_type = res.headers.get("Content-Type", "")
             if "text/html" in content_type:
-                print(f"⚠️ Warning: URL returned HTML instead of image: {url}")
                 return None
 
             ext = 'mp3' if is_audio else 'png' if is_logo else 'jpg'
             name = os.path.join(VIDEO_DIR, f"temp_{uuid.uuid4().hex[:8]}.{ext}")
             with open(name, 'wb') as f: f.write(res.content)
             
-            # 🟢 Validate Image Integrity
             if not is_audio:
                 try:
                     with Image.open(name) as img:
-                        img.verify() # Checks if file is broken
+                        img.verify() 
                 except Exception:
-                    print(f"❌ Corrupt Image Detected: {url}")
                     if os.path.exists(name): os.remove(name)
                     return None
 
-            # Python Resize (Fast)
+            # Resize to mobile vertical resolution
             if not is_audio and not is_logo:
                 try:
                     with Image.open(name) as img:
                         img = img.convert("RGB")
-                        
                         img_ratio = img.width / img.height
                         target_ratio = WIDTH / HEIGHT
 
@@ -151,10 +153,7 @@ def download_and_process_image(args):
                         img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
 
                         final_canvas = Image.new("RGB", (WIDTH, HEIGHT), (255, 255, 255))
-                        paste_x = (WIDTH - new_w) // 2
-                        paste_y = (HEIGHT - new_h) // 2
-                        final_canvas.paste(img, (paste_x, paste_y))
-                        
+                        final_canvas.paste(img, ((WIDTH - new_w) // 2, (HEIGHT - new_h) // 2))
                         final_canvas.save(name, "JPEG", quality=95)
                 except: pass
             
@@ -166,11 +165,9 @@ def download_and_process_image(args):
             return (i, name)
     except: return None
 
-# --- TEMPLATE OVERLAY (Fixed to safely handle 'none') ---
 def create_template_overlay(template_id, output_path):
-    # 🟢 STRICT CHECK: If ID is 'none', 'null', or empty, return None immediately.
-    if not template_id or str(template_id).lower() in ["none", "null", ""]: 
-        return None
+    """Creates a graphical overlay based on selected video themes (Sale, Luxury, etc.)."""
+    if not template_id or str(template_id).lower() in ["none", "null", ""]: return None
     
     try:
         overlay = Image.new("RGBA", (WIDTH, HEIGHT), (0,0,0,0))
@@ -194,6 +191,7 @@ def create_template_overlay(template_id, output_path):
     except: return None
 
 def create_outro_image(last_image_path, text, output_path, cta_text="ORDER NOW", brand_color="#FFD700"):
+    """Creates a final call-to-action slide for the end of the video."""
     try:
         if last_image_path and os.path.exists(last_image_path):
             base = Image.open(last_image_path).convert("RGB").filter(ImageFilter.GaussianBlur(15))
@@ -220,11 +218,12 @@ def create_outro_image(last_image_path, text, output_path, cta_text="ORDER NOW",
     except: return None
 
 async def fetch_brand_settings(shop_name):
+    """Retrieves stored brand kit settings (colors, logo) from the database."""
     if not shop_name: return None
     try: return await brand_collection.find_one({"shop": shop_name})
     except: return None
 
-# 🚀 MAIN FUNCTION (Robust & Crash Proof)
+# 🚀 MAIN FUNCTION: Handles the entire video assembly process
 def generate_video_from_images(image_urls, product_title, product_desc, logo_url=None, gender="female", 
                                target_duration=15, script_tone="Professional", custom_music_path=None, 
                                progress_callback=None, shop_name=None, video_theme="Modern", 
@@ -233,9 +232,8 @@ def generate_video_from_images(image_urls, product_title, product_desc, logo_url
     if not os.path.exists(VIDEO_DIR): os.makedirs(VIDEO_DIR)
     if progress_callback: progress_callback(5)
 
-    # 1. Fetch Brand Kit
-    brand_color = "#FFD700"
-    cta_text = "ORDER NOW"
+    # 1. Fetch Brand Kit data
+    brand_color, cta_text = "#FFD700", "ORDER NOW"
     if shop_name:
         try:
             settings = asyncio.run(fetch_brand_settings(shop_name))
@@ -245,14 +243,12 @@ def generate_video_from_images(image_urls, product_title, product_desc, logo_url
                 if settings.get("logo_url") and not logo_url: logo_url = settings["logo_url"]
         except: pass
 
-    downloaded_images = []
-    bgm_file, vo_file, logo_file = None, None, None
-    script_text = ""
+    downloaded_images, bgm_file, vo_file, logo_file, script_text = [], None, None, None, ""
 
     if custom_music_path and os.path.exists(custom_music_path):
         bgm_file = custom_music_path
 
-    # Parallel Download
+    # Parallel Download of all media assets
     session = create_robust_session()
     with ThreadPoolExecutor(max_workers=8) as exec:
         future_audio = exec.submit(process_audio_chain, product_title, product_desc, gender, script_tone, target_duration)
@@ -273,7 +269,7 @@ def generate_video_from_images(image_urls, product_title, product_desc, logo_url
     downloaded_images.sort()
 
     try:
-        # Generate Extras
+        # Assemble Extras: Outro and Theme Overlays
         last_img = downloaded_images[-1][1]
         outro_path = os.path.join(VIDEO_DIR, f"outro_{uuid.uuid4().hex[:6]}.jpg")
         create_outro_image(last_img, product_title, outro_path, cta_text=cta_text, brand_color=brand_color)
@@ -282,49 +278,42 @@ def generate_video_from_images(image_urls, product_title, product_desc, logo_url
         overlay_path = os.path.join(VIDEO_DIR, f"overlay_{uuid.uuid4().hex[:6]}.png")
         generated_overlay = create_template_overlay(template_id, overlay_path)
 
-        # Durations
+        # Calculate final video and image slide durations
         audio_dur = get_audio_duration(vo_file) if vo_file else 0
         final_dur = max(5.0, min(float(target_duration), audio_dur if audio_dur > 0 else float(target_duration)))
-        
         num_images = len(downloaded_images)
         img_dur = (final_dur - 3.0) / max(1, num_images - 1)
 
         output_name = f"vid_{uuid.uuid4().hex[:6]}.mp4"
         output_path = os.path.join(VIDEO_DIR, output_name)
         
-        # 🟢 CRITICAL FIX: UNIFORM SCALING FOR ALL INPUTS
-        input_args = []
-        filter_complex = ""
-        concat_v = ""
-        current_idx = 0
+        # Assemble FFmpeg filter complex for uniform scaling
+        input_args, filter_complex, concat_v, current_idx = [], "", "", 0
         
         for i, item in enumerate(downloaded_images):
             input_args.extend(["-loop", "1", "-t", str(3.0 if i==num_images-1 else img_dur), "-i", item[1]])
-            
-            # 👇 FORCE scale=480:854 for EVERY image.
             filter_complex += f"[{current_idx}:v]scale=480:854,setsar=1[v{current_idx}];"
-            
             concat_v += f"[v{current_idx}]"
             current_idx += 1
         
         filter_complex += f"{concat_v}concat=n={num_images}:v=1:a=0[base];"
         last_node = "[base]"
 
-        # 2. Overlay
+        # Add graphical overlays if enabled
         if generated_overlay and os.path.exists(generated_overlay):
             input_args.extend(["-loop", "1", "-i", generated_overlay])
             filter_complex += f"{last_node}[{current_idx}:v]overlay=0:0[v_over];"
             last_node = "[v_over]"
             current_idx += 1
 
-        # 3. Logo
+        # Add branding logo to the corner
         if logo_file and os.path.exists(logo_file):
             input_args.extend(["-i", logo_file])
             filter_complex += f"{last_node}[{current_idx}:v]overlay=W-w-20:40[v_final];"
             last_node = "[v_final]"
             current_idx += 1
 
-        # 4. Audio
+        # Audio mixing: combine background music and voiceover
         bgm_in = bgm_file if (bgm_file and os.path.exists(bgm_file)) else "anullsrc"
         input_args.extend(["-stream_loop", "-1", "-i", bgm_in])
         bgm_idx = current_idx
@@ -340,35 +329,30 @@ def generate_video_from_images(image_urls, product_title, product_desc, logo_url
             filter_complex += f"[{bgm_idx}:a]volume=0.5[a_out]"
             audio_map = "[a_out]"
 
-        # 👇 ULTRAFAST COMMAND (No Capture Output = NO STUCK)
+        # Construct final FFmpeg command for rendering
         cmd = [
-            'ffmpeg', '-y', *input_args,
-            '-filter_complex', filter_complex,
-            '-map', last_node, '-map', audio_map,
-            '-c:v', 'libx264', 
-            '-preset', 'ultrafast', 
-            '-tune', 'zerolatency',
-            '-pix_fmt', 'yuv420p', 
-            '-shortest', output_path
+            'ffmpeg', '-y', *input_args, 
+            '-filter_complex', filter_complex, 
+            '-map', last_node, '-map', audio_map, 
+            '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', 
+            '-pix_fmt', 'yuv420p', '-shortest', output_path
         ]
         
         if progress_callback: progress_callback(70)
-        print("🎬 Running FFmpeg (Fast Mode)...")
-        
         subprocess.run(cmd, check=True) 
         
-        if progress_callback: progress_callback(95)
+        if progress_callback: progress_callback(100)
         return output_name, script_text
 
     except Exception as e:
-        print(f"❌ Error: {e}")
+        print(f"❌ Error during video generation: {e}")
         return None, ""
     finally:
-        # Cleanup
+        # Cleanup temporary files from the shared volume to save space
         for _, f in downloaded_images: 
             if os.path.exists(f): os.remove(f)
         if vo_file and os.path.exists(vo_file): os.remove(vo_file)
         if bgm_file and os.path.exists(bgm_file) and "bensound" in BGM_URL: os.remove(bgm_file)
         if logo_file and os.path.exists(logo_file): os.remove(logo_file)
-        if 'generated_overlay' in locals() and generated_overlay and os.path.exists(generated_overlay):
+        if 'generated_overlay' in locals() and generated_overlay and os.path.exists(generated_overlay): 
             os.remove(generated_overlay)
