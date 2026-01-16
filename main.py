@@ -13,7 +13,7 @@ from routes import video, auth, publish, general
 app = FastAPI()
 
 # --- Middleware ---
-# 1. FIXED: Added your Netlify URL to stop the "SecurityError: Blocked a frame" 
+# 1. FIXED: Netlify URL ko specifically allow kiya gaya hai taake "SecurityError" khatam ho sakay
 #
 origins = [
     "http://localhost:3000",
@@ -30,7 +30,8 @@ app.add_middleware(
     allow_credentials=True
 )
 
-# 2. REQUIRED: Session secret for Authlib and OAuth
+# 2. REQUIRED: Session secret key Authlib/OAuth ke liye lazmi hai
+#
 app.add_middleware(
     SessionMiddleware, 
     secret_key="UZMA_VIDEO_PROJECT_FINAL_SECRET_999", 
@@ -38,14 +39,16 @@ app.add_middleware(
     https_only=True
 )
 
-# 3. REQUIRED: Ensures Railway's HTTPS headers are trusted
+# 3. REQUIRED: Railway ke HTTPS headers ko trust karne ke liye
 app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
-# --- Mount Static Files ---
-# ⚠️ Note: On Railway, files created by the worker aren't shared with the backend 
-# unless using a Volume. This explains the 404 error.
+# --- Mount Static Files (Railway Volume Support) ---
+#
+# Agar folder nahi hai toh volume ke andar create ho jayega
 if not os.path.exists(VIDEO_DIR):
     os.makedirs(VIDEO_DIR)
+
+# Static files ab shared volume (/app/video) se serve hongi
 app.mount("/static", StaticFiles(directory=VIDEO_DIR), name="static")
 
 # --- Include Routers ---
