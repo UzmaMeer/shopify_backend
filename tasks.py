@@ -4,12 +4,12 @@ from pymongo import MongoClient
 from datetime import datetime
 from utils import generate_video_from_images 
 
-# Configuration from Railway Environment
+# Config from Railway
 MONGO_DETAILS = os.getenv("MONGO_DETAILS")
 GEMINI_KEY = os.getenv("GEMINI_API_KEY")
 BASE_URL = os.getenv("BASE_PUBLIC_URL")
 
-# Use MongoClient for stable synchronous updates in the worker
+# Synchronous connection for Worker stability
 client = MongoClient(MONGO_DETAILS if MONGO_DETAILS else "mongodb://localhost:27017")
 db = client.video_ai_db
 video_jobs_collection = db.get_collection("video_jobs")
@@ -28,7 +28,7 @@ def process_video_job_task(job_id, image_urls, title, desc, logo_url, voice_gend
     try:
         update_job_progress(job_id, 10)
         
-        # Call the rendering logic in utils.py
+        # Rendering logic
         filename, script_used = generate_video_from_images(
             image_urls, title, desc, logo_url, voice_gender, 
             duration, script_tone, custom_music_path, 
@@ -43,7 +43,7 @@ def process_video_job_task(job_id, image_urls, title, desc, logo_url, voice_gend
                 {"job_id": job_id},
                 {"$set": {"status": "done", "progress": 100, "url": video_url, "completed_at": datetime.utcnow()}}
             )
-            print(f"✅ Job completed: {filename}")
+            print(f"✅ Job finished: {filename}")
     except Exception as e:
         print(f"❌ Worker error: {str(e)}")
         update_job_progress(job_id, 0, status="failed")
