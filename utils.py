@@ -63,7 +63,7 @@ def get_audio_duration(file_path):
 def process_audio_chain(title, desc, gender, script_tone, duration):
     """Generates a script via AI and converts it to speech using pyttsx3."""
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-2.5-flash')
         clean_desc = desc.replace('<p>', '').replace('</p>', '').replace('<br>', ' ')
         target_word_count = int(float(duration) * 2.2) 
         
